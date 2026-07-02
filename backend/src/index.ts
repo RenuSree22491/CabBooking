@@ -1,11 +1,8 @@
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import User from './models/User';
-import Ride from './models/Ride';
 
 dotenv.config();
 
@@ -18,15 +15,28 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// --- IN-MEMORY DATABASE ---
+let users: any[] = [];
+let rides: any[] = [];
+let nextId = 1;
+
 // --- ROUTES ---
 
 // Simple Login/Signup Mock for Demo
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', (req, res) => {
   const { email, name, role } = req.body;
   try {
-    let user = await User.findOne({ email });
+    let user = users.find(u => u.email === email);
     if (!user) {
-      user = await User.create({ email, name, role });
+      user = { 
+        _id: String(nextId++), 
+        email, 
+        name, 
+        role, 
+        isAvailable: role === 'driver',
+        location: role === 'driver' ? { lat: 51.505, lng: -0.09 } : null
+      };
+      users.push(user);
     }
     res.json(user);
   } catch (err) {
@@ -35,12 +45,16 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Request a ride
-app.post('/api/rides/request', async (req, res) => {
+app.post('/api/rides/request', (req, res) => {
   const { riderId, pickupLocation, dropoffLocation, fare } = req.body;
   try {
-    const ride = await Ride.create({
-      riderId, pickupLocation, dropoffLocation, fare
-    });
+    const ride = {
+      _id: String(nextId++),
+      riderId, pickupLocation, dropoffLocation, fare,
+      status: 'requested',
+      driverId: null
+    };
+    rides.push(ride);
     
     // Notify all available drivers via Socket.io
     io.emit('new_ride_request', ride);
@@ -52,19 +66,20 @@ app.post('/api/rides/request', async (req, res) => {
 });
 
 // Driver accepts ride
-app.post('/api/rides/:id/accept', async (req, res) => {
+app.post('/api/rides/:id/accept', (req, res) => {
   const { driverId } = req.body;
   try {
-    const ride = await Ride.findByIdAndUpdate(
-      req.params.id, 
-      { driverId, status: 'accepted' },
-      { new: true }
-    ).populate('riderId driverId');
-    
-    // Notify the specific rider
-    io.to(`rider_${ride?.riderId._id}`).emit('ride_accepted', ride);
-    
-    res.json(ride);
+    const rideIndex = rides.findIndex(r => r._id === req.params.id);
+    if (rideIndex !== -1) {
+      rides[rideIndex].driverId = driverId;
+      rides[rideIndex].status = 'accepted';
+      
+      // Notify the specific rider
+      io.to(`user_${rides[rideIndex].riderId}`).emit('ride_accepted', rides[rideIndex]);
+      res.json(rides[rideIndex]);
+    } else {
+      res.status(404).json({ error: 'Ride not found' });
+    }
   } catch (err) {
     res.status(500).json({ error: 'Failed to accept ride' });
   }
@@ -79,16 +94,23 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} joined room user_${userId}`);
   });
 
-  socket.on('driver_location_update', async (data) => {
-    // data: { driverId, lat, lng, rideId }
-    await User.findByIdAndUpdate(data.driverId, { location: { lat: data.lat, lng: data.lng } });
+  socket.on('driver_location_update', (data) => {
+    // data: { driverId, lat, lng, rideId, isIdle }
+    const userIndex = users.findIndex(u => u._id === data.driverId);
+    if (userIndex !== -1) {
+      users[userIndex].location = { lat: data.lat, lng: data.lng };
+    }
     
-    if (data.rideId) {
-      // Forward to rider
-      const ride = await Ride.findById(data.rideId);
+    if (data.rideId && !data.isIdle) {
+      // Forward to specific rider if in active ride
+      const ride = rides.find(r => r._id === data.rideId);
       if (ride) {
         io.to(`user_${ride.riderId}`).emit('driver_location', { lat: data.lat, lng: data.lng });
       }
+    } else {
+      // Broadcast to all riders as nearby drivers
+      const availableDrivers = users.filter(u => u.role === 'driver' && u.isAvailable && u.location);
+      io.emit('nearby_drivers', availableDrivers);
     }
   });
 
@@ -99,11 +121,4 @@ io.on('connection', (socket) => {
 
 // --- SERVER START ---
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/cabbooking';
-
-mongoose.connect(MONGO_URI)
-  .then(() => {
-    console.log('Connected to MongoDB');
-    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  })
-  .catch(err => console.error('MongoDB connection error:', err));
+server.listen(PORT, () => console.log(`Server running on port ${PORT} (Using In-Memory Array DB)`));

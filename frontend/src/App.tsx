@@ -25,6 +25,7 @@ export default function App() {
   const [rideRequest, setRideRequest] = useState<any>(null);
   const [activeRide, setActiveRide] = useState<any>(null);
   const [driverLocation, setDriverLocation] = useState({ lat: 51.505, lng: -0.09 });
+  const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
 
   useEffect(() => {
     const newSocket = io(SOCKET_URL);
@@ -34,6 +35,10 @@ export default function App() {
       if (user?.role === 'driver' && user?.isAvailable) {
         setRideRequest(ride);
       }
+    });
+
+    newSocket.on('nearby_drivers', (drivers) => {
+      setNearbyDrivers(drivers);
     });
 
     newSocket.on('ride_accepted', (ride) => {
@@ -47,6 +52,19 @@ export default function App() {
 
     return () => { newSocket.disconnect(); };
   }, [user]);
+
+  // Idle Roaming for Drivers
+  useEffect(() => {
+    if (user?.role === 'driver' && !activeRide) {
+      const interval = setInterval(() => {
+        const newLat = driverLocation.lat + (Math.random() * 0.002 - 0.001);
+        const newLng = driverLocation.lng + (Math.random() * 0.002 - 0.001);
+        setDriverLocation({ lat: newLat, lng: newLng });
+        socket?.emit('driver_location_update', { driverId: user._id, lat: newLat, lng: newLng, isIdle: true });
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [user, activeRide, socket, driverLocation]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,12 +164,31 @@ export default function App() {
 
       {/* Main Map Area */}
       <main className="flex-1 relative">
-        <MapContainer center={[driverLocation.lat, driverLocation.lng]} zoom={14} className="h-full w-full z-0">
+        <MapContainer center={[51.505, -0.09]} zoom={14} className="absolute inset-0 z-0">
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <Marker position={[driverLocation.lat, driverLocation.lng]}>
-            <Popup>Driver Location</Popup>
-          </Marker>
-          <MapCenterer center={[driverLocation.lat, driverLocation.lng]} />
+          
+          {/* Render Active Trip Driver */}
+          {activeRide && (
+            <Marker position={[driverLocation.lat, driverLocation.lng]}>
+              <Popup>Your Driver</Popup>
+            </Marker>
+          )}
+
+          {/* Render Nearby Drivers for Riders */}
+          {user.role === 'rider' && !activeRide && nearbyDrivers.map(d => (
+            <Marker key={d._id} position={[d.location.lat, d.location.lng]}>
+              <Popup>Available Driver: {d.name}</Popup>
+            </Marker>
+          ))}
+
+          {/* Render Self Location for Driver */}
+          {user.role === 'driver' && !activeRide && (
+            <Marker position={[driverLocation.lat, driverLocation.lng]}>
+              <Popup>You</Popup>
+            </Marker>
+          )}
+
+          <MapCenterer center={user.role === 'driver' ? [driverLocation.lat, driverLocation.lng] : [51.505, -0.09]} />
         </MapContainer>
 
         {/* Overlay Cards */}
