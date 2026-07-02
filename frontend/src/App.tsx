@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { io, Socket } from 'socket.io-client';
 import { Car, MapPin, User, LogOut, CheckCircle2, Navigation } from 'lucide-react';
 import L from 'leaflet';
+import { MapCenterer } from './components/MapCenterer';
 
 // Fix Leaflet icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -13,7 +14,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-const SOCKET_URL = 'http://localhost:5000';
+const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 export default function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -69,7 +70,7 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
+      const res = await fetch(`${SOCKET_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, name: email.split('@')[0], role })
@@ -86,7 +87,7 @@ export default function App() {
     const pickup = { lat: 51.505, lng: -0.09, address: 'Current Location' };
     const dropoff = { lat: 51.51, lng: -0.1, address: 'Destination' };
     try {
-      const res = await fetch('http://localhost:5000/api/rides/request', {
+      const res = await fetch(`${SOCKET_URL}/api/rides/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ riderId: user._id, pickupLocation: pickup, dropoffLocation: dropoff, fare: 25.50 })
@@ -101,7 +102,7 @@ export default function App() {
   const acceptRide = async () => {
     if (!rideRequest) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/rides/${rideRequest._id}/accept`, {
+      const res = await fetch(`${SOCKET_URL}/api/rides/${rideRequest._id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ driverId: user._id })
